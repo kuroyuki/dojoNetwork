@@ -1,0 +1,12 @@
+{application, dojoApp,
+ [
+  {description, "dojo Application"},
+  {vsn, "0.1"},
+  {registered, [dojoNetwork, dojoManager]},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {mod, { dojoApp_app, []}},
+  {env, []}
+ ]}.
