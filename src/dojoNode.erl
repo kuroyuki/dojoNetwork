@@ -2,143 +2,112 @@
 -module(dojoNode).
 -author("yuki").
 
--define(THRESHOLD, 100).
--define(DEFAULT_PRE, 100).
--define(DEFAULT_CLEFT, 0).
--define(DEFAULT_POST, 0.5).
+-define(THRESHOLD, 1).
+-define(TIME_CONST, 1.1).
 
-%% ====================================================================
-%% API functions
-%% ====================================================================
+%% API
 -export([start_link/1]).
--export([init/1]).
+-export([init/0]).
 
-%% ====================================================================
-%% Internal functions
-%% ====================================================================
-start_link(Pos)->
+start_link(_Pos)->
   %return process link to initiator
-	spawn_link(?MODULE, init, [Pos]).
+  spawn_link(?MODULE, init, []).
 
-init(Pos)->
+init()->
   %create table for storing source synapses data
-	Sources = ets:new(sources, []),
+  Sources = ets:new(sources, []),
 
-	node_loop(1, Pos, 0, Sources, []). 
+  node_loop(10, 0, Sources, []).
 
-node_loop(Timeout, Pos, Voltage, Sources, Targets)->
-	receive 
-		%message from Presynaptic cell
-		{ap_from_source, Source} ->
-			%find source in table
-			case ets:lookup(Sources, Source) of
-				[{Source, {Pre, Cleft, Post}}] ->	
-					%modify Pre
-					modify_presynapse(),
-					%fill cleft with mediator from presynapse cell
-					ets:insert(Sources, {Source, {Pre, Cleft + Pre, Post}});
+node_loop(Timeout, Voltage, Sources, Targets)->
+  receive
+      %AP from Presynaptic cell
+      {ap, Source, Value} ->
+          case ets:lookup(Sources, Source) of
+              [{Source, {Cleft, Distance, Post}}] ->
+                  %fill cleft with mediator from presynapse
+                  NewCleft = Cleft + Value,
+                  %change in membrane voltage
+                  AddedVoltage =  NewCleft*Post/Distance,
+                  %mediator in cleft
+                  RemainMediator =  NewCleft-NewCleft*Post,
 
-				_Any ->
-					io:format("no source ~p~n", [Source])
-			end,
-      %continue
-      node_loop(Timeout, Pos, Voltage, Sources, Targets);
+                  ets:insert(Sources, {Source, {RemainMediator, Distance, Post}}),
 
-		%create synapse with Presynapric cell
-		{add_source, Source} ->			
-			case ets:lookup(Sources, Source) of								
-				[] ->
-					ets:insert(Sources, {Source, {?DEFAULT_PRE, ?DEFAULT_CLEFT, ?DEFAULT_POST}});
-				[_Any] ->					
-					already_exist
-			end,
-      %continue
-      node_loop(Timeout, Pos, Voltage, Sources, Targets);
+                  %add voltage from synapse to node's membrane
+                  node_loop(1, Voltage + AddedVoltage, Sources, Targets) ;
 
-		%create synapse with Postsynaptic cell
-		{add_target, Target} ->			
-			case find_target(Targets, Target) of
-				[] ->
-					NewTargets = [Targets | Target],
+              _Any ->
+                  not_exist,
+                  node_loop(Timeout, Voltage, Sources, Targets)
+          end;
+
+      %create synapse with Presynapric cell
+      {add_source, Source, Distance} ->
+          case ets:lookup(Sources, Source) of
+              [] ->
+                  %create Synapse with random koeff and empty cleft
+                  ets:insert(Sources, {Source, {0, Distance, random:uniform()}})   ;
+              [_Any] ->
+                  already_exist
+          end,
           %continue
-          node_loop(Timeout, Pos, Voltage, Sources, NewTargets) ;
+          node_loop(Timeout, Voltage, Sources, Targets);
 
-				%such target already registered
-				_Target ->
+      %create synapse with Postsynaptic cell
+      {add_target, Target} ->
+          case find_target(Targets, Target) of
+              [] ->
+                  NewTargets = [Targets | Target],
+                  %continue
+                  node_loop(Timeout, Voltage, Sources, NewTargets) ;
+              %such target already registered
+              _Target ->
+                  %continue
+                  node_loop(Timeout, Voltage, Sources, Targets)
+          end;
+      Unknown ->
+          io:format("Unknown message :~p~n", [Unknown]),
           %continue
-          node_loop(Timeout, Pos, Voltage, Sources, Targets)
-			end;
-			
-		Any ->
-			io:format("~p received : ~p~n", [Pos, Any])	,
-      %continue
-      node_loop(Timeout, Pos, Voltage, Sources, Targets)
-	
-	%regular checking - all time-depend features should be implemented here
-	after 1 ->
-		%axon growing algorithm - will be here
-		%transfer mediator from presynaptic clefts to this cell
-		NewVoltage = check_postsynapses(Sources) + Voltage,
+          node_loop(Timeout, Voltage, Sources, Targets)
 
-		if
-      %Node threshold is achieved
-			NewVoltage>?THRESHOLD	->				
-				%io:format("~p : ~p generates AP~n", [erlang:now(), Pos]),
-				send_ap_to_all_targets(Targets),
-        %next check in 10 ms
-				node_loop(10, Pos, 0, Sources, Targets);
-      % Voltage threshold  is not achieved
-			NewVoltage=<?THRESHOLD ->
-				node_loop(10, Pos, NewVoltage, Sources, Targets)
-		end
-	end,
-  io:format("~p node with pos ~p stopped ~n", [self(), Pos]).
+      after Timeout ->
+          io:format("~p check~n", [erlang:now()]),
+          if  Voltage > ?THRESHOLD ->
+                  generate_AP(Targets, 1),
+                  modify_posynapses(Sources),
+                  %continue
+                  node_loop(10, 0, Sources, Targets);
 
-send_ap_to_all_targets([])->
-	ok;
+              Voltage =< ?THRESHOLD ->
+                  if  Timeout < 10 ->
+                          %continue
+                          node_loop(10, Voltage, Sources, Targets);
+                      Timeout >= 10 ->
+                          %continue
+                          node_loop(round(Timeout*?TIME_CONST), Voltage, Sources, Targets)
+                  end
+          end
 
-send_ap_to_all_targets(TargetList)->
-	[RemainTargets | Target] = TargetList,	
-	Target ! {ap_from_source, self()},
-	send_ap_to_all_targets(RemainTargets).
+      end.
+
 
 find_target([], _Target)->
-	[];
+    [];
+find_target([CheckTarget | RemainTargets], Target) ->
+    if  Target == CheckTarget ->
+            CheckTarget;
+        Target =/= CheckTarget ->
+            find_target(RemainTargets, Target)
+    end.
 
-find_target(TargetsList, Target) ->
-	[RemainTargets | CheckTarget] = TargetsList,
-	if 
-		Target == CheckTarget ->
-		   CheckTarget;
-		
-		Target =/= CheckTarget ->
-			find_target(RemainTargets, Target) 
-	end.
+generate_AP([], Value)->
+    ok;
+generate_AP([Target | Targets], Value)->
+    [RemainTargets | Target] = Targets,
+    Target ! {ap, self(), Value},
+    generate_AP(RemainTargets, Value).
 
-check_postsynapses(Sources) ->
-	
-	case ets:first(Sources) of
-		'$end_of_table' ->			
-			0;
-		
-		Source ->
-			[{Source, {Pre, Cleft, Post}}] = ets:lookup(Sources, Source),			
-			ets:insert(Sources, {Source, {Pre, Cleft - Cleft*Post,  Post}}),	
-			Voltage = check_postsynapses(Sources, Source, Cleft*Post),		
-			Voltage	
-			
-	end.
-check_postsynapses(Sources, Next, CurrentVoltage) ->
-	case ets:next(Sources, Next) of
-		'$end_of_table' ->			
-			CurrentVoltage+0;
-		
-		Source ->
-			[{Source, {Pre, Cleft, Post}}] = ets:lookup(Sources, Source),
-			ets:insert(Sources, {Source, {Pre, Cleft - Cleft*Post,  Post}}),
-			check_postsynapses(Sources, Source, CurrentVoltage+Cleft*Post)
-	end.
-
-modify_presynapse()->
-	ok.
+modify_posynapses(Sources)->
+    ok.
 
