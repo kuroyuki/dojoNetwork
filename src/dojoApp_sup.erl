@@ -40,5 +40,5 @@ init(_Params) ->
     Manager = {dojoManager, {dojoManager, start_link, []},
       Restart, Shutdown, Type, [dojoManager]},
 
-    {ok, {SupFlags, [Network, Manager]}}.
+    {ok, {SupFlags, [Manager, Network]}}.
 

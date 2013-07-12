@@ -41,8 +41,8 @@ get_node_pid(Coords) ->
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
 init([]) ->
-  Filename = "net.dojo",
-  io:format("config file is ~p~n", [Filename]),
+  Filename = "./../net.dojo",
+  dojoManager!{net_message, {"config data from", Filename}},
   {ok, S} = file:open(Filename, read),
 
   Nodes = ets:new(nodes, []),
@@ -92,7 +92,7 @@ handle_call({get_node_pid, Node}, _From, Nodes) ->
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
 handle_cast({new_node, Position}, Nodes) ->
-  io:format("creating node ~n"),
+  dojoManager!{net_message, {"casting node", Position}},
   insert_node(Nodes, Position),
   {noreply, Nodes};
 
@@ -100,29 +100,28 @@ handle_cast({bind_nodes, Source, Target, _Data}, Nodes) when is_pid(Source) ->
   case ets:lookup(Nodes, Target) of
     [{_TargetPos, TargetPid}] ->
       TargetPid ! {add_source, Source};
-    Any ->
-      io:format("target not found ~p~n", Any)
+    _Any ->
+      dojoManager!{net_message, {"no such target", Target}}
   end;
 handle_cast({bind_nodes, Source, Target, _Data}, Nodes) when is_pid(Target) ->
   case ets:lookup(Nodes, Source) of
     [{_SourcePos, SourcePid}] ->
       SourcePid ! {add_target, Target};
-    Any ->
-      io:format("target not found ~p~n", Any)
+    _Any ->
+      dojoManager!{net_message, {"no such source", Source}}
   end;
 handle_cast({bind_nodes, Source, Target, _Data}, Nodes) ->
-  io:format("searching for nodes~n"),
   case ets:lookup(Nodes, Source) of
     [{_SourcePos, SourcePid}] ->
       case ets:lookup(Nodes, Target) of
         [{_TargetPos, TargetPid}] ->
           SourcePid ! {add_target, TargetPid},
           TargetPid ! {add_source, SourcePid};
-        Any ->
-          io:format("target not found ~p~n", Any)
+        _Any ->
+          dojoManager!{net_message, {"no such target", Target}}
       end;
-    Any ->
-      io:format("source not found ~p~n", Any)
+    _Any ->
+      dojoManager!{net_message, {"no such source", Source}}
   end,
 
   {noreply, Nodes};
@@ -131,8 +130,8 @@ handle_cast({add_voltage, Voltage, Node}, Nodes) ->
   case ets:lookup(Nodes, Node) of
     [{_SourcePos, SourcePid}] ->
       SourcePid!{add_voltage, Voltage};
-    Any ->
-      io:format("node ~p not found with ~p ~n", [Node, Any])
+    _Any ->
+      dojoManager!{net_message, {"no such node", Node}}
   end,
   {noreply, Nodes}.
 
@@ -199,11 +198,10 @@ create_net(Table, Stream)->
       create_net(Table, Stream);
 
     Any ->
-      io:format("error ~p~n", [Any])
+      dojoManager!{net_message, {"net is not created", Any}}
   end.
 
 insert_node(Table, Node)->
-  io:format("~p insert node ~n", [Node]),
   case ets:lookup(Table, Node) of
     [] ->
       NodePid = dojoNode:start_link(Node),
@@ -213,5 +211,5 @@ insert_node(Table, Node)->
     [{_Node, NodePid}] ->
       NodePid;
     Any ->
-      io:format("~p ~n", [Any])
+      dojoManager!{net_message, {"node is not inserted", Any}}
   end.

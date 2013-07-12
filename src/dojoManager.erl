@@ -6,7 +6,6 @@
 
 %% API
 -export([start_link/0]).
--export([test/0]).
 
 %% gen_server
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
@@ -15,9 +14,6 @@
 %% API
 start_link() ->
   gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-
-test()->
-  gen_server:call(?MODULE, test).
 
 %% gen_server callbacks
 -record(state, {}).
@@ -32,7 +28,11 @@ handle_call(test, _From, State) ->
 handle_cast(_Request, State) ->
   {noreply, State}.
 
-handle_info(_Info, State) ->
+handle_info({node_message, {NodePos, Message, Data}}, State) ->
+  io:format("~p node ~p : ~p ~p~n",[erlang:now(), NodePos, Message, Data]),
+  {noreply, State};
+handle_info({net_message, {Message, Data}}, State) ->
+  io:format("~p Network : ~p ~p~n",[erlang:now(), Message, Data]),
   {noreply, State}.
 
 terminate(_Reason, _State) ->
