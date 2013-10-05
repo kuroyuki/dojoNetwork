@@ -17,6 +17,7 @@ init()->
   %create table for storing source synapses data
   Sources = ets:new(sources, []),
 
+  io:format("~p ~p node started~n", [erlang:now(),self()]),
   node_loop(10, 0, Sources, []).
 
 node_loop(Timeout, Voltage, Sources, Targets)->
@@ -43,11 +44,11 @@ node_loop(Timeout, Voltage, Sources, Targets)->
           end;
 
       %create synapse with Presynapric cell
-      {add_source, Source, Distance} ->
+      {add_source, Source, Distance, Post} ->
           case ets:lookup(Sources, Source) of
               [] ->
                   %create Synapse with random koeff and empty cleft
-                  ets:insert(Sources, {Source, {0, Distance, random:uniform()}})   ;
+                  ets:insert(Sources, {Source, {0, Distance, Post}})   ;
               [_Any] ->
                   already_exist
           end,
@@ -56,27 +57,36 @@ node_loop(Timeout, Voltage, Sources, Targets)->
 
       %create synapse with Postsynaptic cell
       {add_target, Target} ->
-          case find_target(Targets, Target) of
-              [] ->
-                  NewTargets = [Targets | Target],
+          case lists:member(Target, Targets) of
+              false ->
+                  %add target to targets list
+                  NewTargets = [Target | Targets],
                   %continue
                   node_loop(Timeout, Voltage, Sources, NewTargets) ;
               %such target already registered
-              _Target ->
+              true ->
                   %continue
                   node_loop(Timeout, Voltage, Sources, Targets)
           end;
+
+      {kill, Reason} ->
+          io:format("~p ~p node stopped with reason ~p~n", [erlang:now(), self(), Reason]),
+          exit(self(), Reason);
+
       Unknown ->
           io:format("Unknown message :~p~n", [Unknown]),
           %continue
           node_loop(Timeout, Voltage, Sources, Targets)
 
       after Timeout ->
-          io:format("~p check~n", [erlang:now()]),
+
           if  Voltage > ?THRESHOLD ->
+
                   generate_AP(Targets, 1),
-                  modify_posynapses(Sources),
-                  %continue
+                  modify_postsynapses(Sources),
+
+                  io:format("~p ~p generates AP~n", [erlang:now(), self()]),
+                  %continue in 10 msec
                   node_loop(10, 0, Sources, Targets);
 
               Voltage =< ?THRESHOLD ->
@@ -92,22 +102,12 @@ node_loop(Timeout, Voltage, Sources, Targets)->
       end.
 
 
-find_target([], _Target)->
-    [];
-find_target([CheckTarget | RemainTargets], Target) ->
-    if  Target == CheckTarget ->
-            CheckTarget;
-        Target =/= CheckTarget ->
-            find_target(RemainTargets, Target)
-    end.
+generate_AP(Targets, Value)->
+    Fun =  fun(Target) ->
+        Target ! {ap, self(), Value}
+    end,
+    lists:foreach(Fun, Targets).
 
-generate_AP([], Value)->
-    ok;
-generate_AP([Target | Targets], Value)->
-    [RemainTargets | Target] = Targets,
-    Target ! {ap, self(), Value},
-    generate_AP(RemainTargets, Value).
-
-modify_posynapses(Sources)->
+modify_postsynapses(Sources)->
     ok.
 

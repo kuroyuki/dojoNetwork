@@ -110,13 +110,21 @@ handle_cast({bind_nodes, Source, Target, _Data}, Nodes) when is_pid(Target) ->
     _Any ->
       dojoManager!{net_message, {"no such source", Source}}
   end;
-handle_cast({bind_nodes, Source, Target, _Data}, Nodes) ->
+handle_cast({bind_nodes, Source, Target, Data}, Nodes) ->
   case ets:lookup(Nodes, Source) of
     [{_SourcePos, SourcePid}] ->
       case ets:lookup(Nodes, Target) of
         [{_TargetPos, TargetPid}] ->
+            {X1,Y1,Z1} = Source,
+            {X2,Y2,Z2} = Target,
+            XDist = X2-X1,
+            YDist = Y2-Y1,
+            ZDist = Z2-Z1,
+            DistanceXY = math:sqrt(XDist*XDist + YDist*YDist),
+
+            Distance =  math:sqrt(DistanceXY*DistanceXY + ZDist*ZDist),
           SourcePid ! {add_target, TargetPid},
-          TargetPid ! {add_source, SourcePid};
+          TargetPid ! {add_source, SourcePid, Distance, Data};
         _Any ->
           dojoManager!{net_message, {"no such target", Target}}
       end;
@@ -148,7 +156,8 @@ handle_cast({add_voltage, Voltage, Node}, Nodes) ->
   NewState :: term(),
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
-handle_info(_Info, Nodes) ->
+handle_info(Any, Nodes) ->
+  io:format("Handle info ~p~n", [Any]),
   {noreply, Nodes}.
 
 
@@ -161,7 +170,10 @@ handle_info(_Info, Nodes) ->
   | {shutdown, term()}
   | term().
 %% ====================================================================
-terminate(_Reason, _State) ->
+terminate(Reason, Nodes) ->
+  io:format("Network terminated~n"),
+  Msg = {kill, Reason},
+  send_message_broadcast(Msg, Nodes),
   ok.
 
 
@@ -186,14 +198,23 @@ create_net(Table, Stream)->
     eof ->
       ok;
 
-    {ok, [Source, Target, _Data]} ->
+    {ok, [Source, Target, Data]} ->
 
       SourcePid = insert_node(Table, Source),
 
       TargetPid = insert_node(Table, Target),
 
+      {X1,Y1,Z1} = Source,
+      {X2,Y2,Z2} = Target,
+      XDist = X2-X1,
+      YDist = Y2-Y1,
+      ZDist = Z2-Z1,
+      DistanceXY = math:sqrt(XDist*XDist + YDist*YDist),
+
+      Distance =  math:sqrt(DistanceXY*DistanceXY + ZDist*ZDist),
+
       SourcePid ! {add_target, TargetPid},
-      TargetPid ! {add_source, SourcePid},
+      TargetPid ! {add_source, SourcePid, Distance, Data},
 
       create_net(Table, Stream);
 
@@ -213,3 +234,22 @@ insert_node(Table, Node)->
     Any ->
       dojoManager!{net_message, {"node is not inserted", Any}}
   end.
+
+send_message_broadcast(Msg, Table) ->
+    case ets:first(Table) of
+        '$end_of_table' ->
+            ok;
+        Node ->
+            [{_Node, NodePid}] = ets:lookup(Table, Node),
+            NodePid!Msg,
+            send_message_broadcast(Msg, Node, Table)
+    end.
+send_message_broadcast(Msg, Next, Table) ->
+    case ets:next(Table, Next) of
+        '$end_of_table' ->
+            ok;
+        Node ->
+            [{_Node, NodePid}] = ets:lookup(Table, Node),
+            NodePid!Msg,
+            send_message_broadcast(Msg, Node, Table)
+    end.
