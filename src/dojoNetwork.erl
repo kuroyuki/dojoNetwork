@@ -43,13 +43,11 @@ get_node_pid(Coords) ->
 init([]) ->
   Filename = "./../net.dojo",
   dojoManager!{net_message, {"config data from", Filename}},
+  dojoDB:init(),
   {ok, S} = file:open(Filename, read),
+  create_net(S),
 
-  Nodes = ets:new(nodes, []),
-
-  create_net(Nodes, S),
-
-  {ok, Nodes}.
+  {ok, []}.
 
 
 %% handle_call/3
@@ -69,13 +67,13 @@ init([]) ->
   Timeout :: non_neg_integer() | infinity,
   Reason :: term().
 %% ====================================================================
-handle_call({get_node_pid, Node}, _From, Nodes) ->
-  Reply =  ets:lookup(Nodes, Node),
+handle_call({get_node_pid, Node}, _From, []) ->
+  Reply =  dojoDB:get_node_pid(Node),
   case Reply of
-    [{_SourcePos, SourcePid}]  ->
-      {reply, SourcePid, Nodes};
-    _Any ->
-      {reply, not_exist, Nodes}
+    {ok, NodePid}  ->
+      {reply, NodePid};
+    {error, not_found} ->
+      {reply, not_found}
   end.
 
 
@@ -91,30 +89,30 @@ handle_call({get_node_pid, Node}, _From, Nodes) ->
   NewState :: term(),
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
-handle_cast({new_node, Position}, Nodes) ->
-  dojoManager!{net_message, {"casting node", Position}},
-  insert_node(Nodes, Position),
-  {noreply, Nodes};
+handle_cast({new_node, Node}, []) ->
+  dojoManager!{net_message, {"casting node", Node}},
+  insert_node(Node),
+  {noreply, []};
 
-handle_cast({bind_nodes, Source, Target, _Data}, Nodes) when is_pid(Source) ->
-  case ets:lookup(Nodes, Target) of
-    [{_TargetPos, TargetPid}] ->
-      TargetPid ! {add_source, Source};
-    _Any ->
-      dojoManager!{net_message, {"no such target", Target}}
+handle_cast({bind_nodes, Source, Target, Data}, []) when is_pid(Source) ->
+  case dojoDB:get_node_pid(Target) of
+  {ok, TargetPid}  ->
+    dojoDB:insert_synapse(Source, TargetPid, {1, Data});
+  {error, not_found} ->
+    dojoManager!{net_message, {"no such target", Target}}
   end;
-handle_cast({bind_nodes, Source, Target, _Data}, Nodes) when is_pid(Target) ->
-  case ets:lookup(Nodes, Source) of
-    [{_SourcePos, SourcePid}] ->
-      SourcePid ! {add_target, Target};
-    _Any ->
-      dojoManager!{net_message, {"no such source", Source}}
+handle_cast({bind_nodes, Source, Target, Data}, []) when is_pid(Target) ->
+  case dojoDB:get_node_pid(Source) of
+    {ok, SourcePid}  ->
+      dojoDB:insert_synapse(SourcePid, Target, {1, Data});
+    {error, not_found} ->
+      dojoManager!{net_message, {"no such source", Target}}
   end;
-handle_cast({bind_nodes, Source, Target, Data}, Nodes) ->
-  case ets:lookup(Nodes, Source) of
-    [{_SourcePos, SourcePid}] ->
-      case ets:lookup(Nodes, Target) of
-        [{_TargetPos, TargetPid}] ->
+handle_cast({bind_nodes, Source, Target, Data}, []) ->
+  case dojoDB:get_node_pid(Source) of
+    {ok, SourcePid}  ->
+      case dojoDB:get_node_pid(Target) of
+        {ok, TargetPid}  ->
             {X1,Y1,Z1} = Source,
             {X2,Y2,Z2} = Target,
             XDist = X2-X1,
@@ -123,25 +121,23 @@ handle_cast({bind_nodes, Source, Target, Data}, Nodes) ->
             DistanceXY = math:sqrt(XDist*XDist + YDist*YDist),
 
             Distance =  math:sqrt(DistanceXY*DistanceXY + ZDist*ZDist),
-          SourcePid ! {add_target, TargetPid},
-          TargetPid ! {add_source, SourcePid, Distance, Data};
+            dojoDB:insert_synapse(SourcePid, TargetPid, {Distance, Data});
         _Any ->
           dojoManager!{net_message, {"no such target", Target}}
       end;
     _Any ->
       dojoManager!{net_message, {"no such source", Source}}
   end,
+  {noreply, []};
 
-  {noreply, Nodes};
-
-handle_cast({add_voltage, Voltage, Node}, Nodes) ->
-  case ets:lookup(Nodes, Node) of
-    [{_SourcePos, SourcePid}] ->
-      SourcePid!{add_voltage, Voltage};
+handle_cast({add_voltage, Voltage, Node}, []) ->
+  case dojoDB:get_node_pid(Node) of
+    {ok, NodePid}  ->
+      NodePid!{add_voltage, Voltage};
     _Any ->
       dojoManager!{net_message, {"no such node", Node}}
   end,
-  {noreply, Nodes}.
+  {noreply, []}.
 
 
 
@@ -156,9 +152,9 @@ handle_cast({add_voltage, Voltage, Node}, Nodes) ->
   NewState :: term(),
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
-handle_info(Any, Nodes) ->
+handle_info(Any, []) ->
   io:format("Handle info ~p~n", [Any]),
-  {noreply, Nodes}.
+  {noreply, []}.
 
 
 %% terminate/2
@@ -170,10 +166,10 @@ handle_info(Any, Nodes) ->
   | {shutdown, term()}
   | term().
 %% ====================================================================
-terminate(Reason, Nodes) ->
+terminate(Reason, []) ->
   io:format("Network terminated~n"),
   Msg = {kill, Reason},
-  send_message_broadcast(Msg, Nodes),
+  dojoDB:send_message_broadcast(Msg),
   ok.
 
 
@@ -192,17 +188,16 @@ code_change(_OldVsn, State, _Extra) ->
 %% ====================================================================
 %% Internal functions
 %% ====================================================================
-create_net(Table, Stream)->
-
-  case io:read(Stream, '') of
+create_net(Stream)->
+   case io:read(Stream, '') of
     eof ->
       ok;
 
     {ok, [Source, Target, Data]} ->
-
-      SourcePid = insert_node(Table, Source),
-
-      TargetPid = insert_node(Table, Target),
+      insert_node(Source),
+      {ok,SourcePid} = dojoDB:get_node_pid(Source),
+      insert_node(Target),
+      {ok,TargetPid} = dojoDB:get_node_pid(Target),
 
       {X1,Y1,Z1} = Source,
       {X2,Y2,Z2} = Target,
@@ -213,43 +208,19 @@ create_net(Table, Stream)->
 
       Distance =  math:sqrt(DistanceXY*DistanceXY + ZDist*ZDist),
 
-      SourcePid ! {add_target, TargetPid},
-      TargetPid ! {add_source, SourcePid, Distance, Data},
+      dojoDB:insert_synapse(SourcePid,TargetPid, {Distance, Data}),
 
-      create_net(Table, Stream);
+      create_net(Stream);
 
     Any ->
       dojoManager!{net_message, {"net is not created", Any}}
   end.
 
-insert_node(Table, Node)->
-  case ets:lookup(Table, Node) of
-    [] ->
-      NodePid = dojoNode:start_link(Node),
-      ets:insert(Table, {Node, NodePid}),
-      NodePid;
-
-    [{_Node, NodePid}] ->
-      NodePid;
-    Any ->
-      dojoManager!{net_message, {"node is not inserted", Any}}
+insert_node(Node)->
+  case dojoDB:get_node_pid(Node) of
+    {error, not_found} ->
+      NodePid = dojoNode:start_link(),
+      dojoDB:insert_node(Node, NodePid);
+    {ok, _NodePid} ->
+      already_exist
   end.
-
-send_message_broadcast(Msg, Table) ->
-    case ets:first(Table) of
-        '$end_of_table' ->
-            ok;
-        Node ->
-            [{_Node, NodePid}] = ets:lookup(Table, Node),
-            NodePid!Msg,
-            send_message_broadcast(Msg, Node, Table)
-    end.
-send_message_broadcast(Msg, Next, Table) ->
-    case ets:next(Table, Next) of
-        '$end_of_table' ->
-            ok;
-        Node ->
-            [{_Node, NodePid}] = ets:lookup(Table, Node),
-            NodePid!Msg,
-            send_message_broadcast(Msg, Node, Table)
-    end.
