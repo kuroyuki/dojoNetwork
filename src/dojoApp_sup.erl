@@ -25,13 +25,13 @@ start_link() ->
 
 init(_Params) ->
     RestartStrategy = one_for_one,
-    MaxRestarts = 1000,
+    MaxRestarts = 10,
     MaxSecondsBetweenRestarts = 3600,
 
     SupFlags = {RestartStrategy, MaxRestarts, MaxSecondsBetweenRestarts},
 
     Restart = permanent,
-    Shutdown = 2000,
+    Shutdown = 200,
     Type = worker,
 
     Network = {dojoNetwork, {dojoNetwork, start_link, []},

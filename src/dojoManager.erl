@@ -30,8 +30,8 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Request,  State) ->
   {noreply, State}.
 
-handle_info({node_message, {NodePos, Message, Data}}, State) ->
-  io:format("~p node ~p : ~p ~p~n",[erlang:now(), NodePos, Message, Data]),
+handle_info({node_message, {Node, Message, Data}}, State) ->
+  io:format("~p node ~p : ~p ~p~n",[erlang:now(), Node, Message, Data]),
   {noreply, State};
 handle_info({net_message, {Message, Data}}, State) ->
   io:format("~p Network : ~p ~p~n",[erlang:now(), Message, Data]),

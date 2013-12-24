@@ -25,7 +25,7 @@ init_io()->
 
   {Sources, Targets}.
 %% ====================================================================
-%% Decodes binary packets and perfoms actions according to packet type
+%% Decodes binary packets and performs actions according to packet type
 %% ====================================================================
 decode_external_packet(Bin) ->
   {<<Packet>>, RemainData} = split_binary(Bin, 1),

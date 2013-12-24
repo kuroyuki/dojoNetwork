@@ -6,4 +6,5 @@
               {mod,{dojoApp_app,[]}},
               {env,[]},
               {modules,[dojoApp_app,dojoApp_sup,dojoDB,dojoIO,dojoManager,
-                        dojoNetwork,dojoNode,json_eep,mnesia_test]}]}.
+                        dojoNetwork,dojoNode,dojoUdpIO,getty,izhikNeuron,
+                        json_eep,mnesia_test,scsiParser]}]}.

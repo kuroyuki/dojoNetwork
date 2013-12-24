@@ -6,7 +6,7 @@
 
 -export([start_link/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([create_node/1, bind_nodes/3, add_voltage/2, get_node_pid/1]).
+-export([create_node/1, bind_nodes/3, add_voltage/2, get_node_pid/1, delete_node/1]).
 %% ====================================================================
 %% API functions
 %% ====================================================================
@@ -24,6 +24,9 @@ add_voltage(Voltage, Node) ->
 
 get_node_pid(Coords) ->
   gen_server:call(?MODULE, {get_node_pid, Coords}).
+
+delete_node(Coords) ->
+  gen_server:cast(?MODULE, {delete_node, Coords}).
 %% ====================================================================
 %% Behavioural functions
 %% ====================================================================
@@ -94,20 +97,6 @@ handle_cast({new_node, Node}, []) ->
   insert_node(Node),
   {noreply, []};
 
-handle_cast({bind_nodes, Source, Target, Data}, []) when is_pid(Source) ->
-  case dojoDB:get_node_pid(Target) of
-  {ok, TargetPid}  ->
-    dojoDB:insert_synapse(Source, TargetPid, {1, Data});
-  {error, not_found} ->
-    dojoManager!{net_message, {"no such target", Target}}
-  end;
-handle_cast({bind_nodes, Source, Target, Data}, []) when is_pid(Target) ->
-  case dojoDB:get_node_pid(Source) of
-    {ok, SourcePid}  ->
-      dojoDB:insert_synapse(SourcePid, Target, {1, Data});
-    {error, not_found} ->
-      dojoManager!{net_message, {"no such source", Target}}
-  end;
 handle_cast({bind_nodes, Source, Target, Data}, []) ->
   case dojoDB:get_node_pid(Source) of
     {ok, SourcePid}  ->
@@ -121,7 +110,11 @@ handle_cast({bind_nodes, Source, Target, Data}, []) ->
             DistanceXY = math:sqrt(XDist*XDist + YDist*YDist),
 
             Distance =  math:sqrt(DistanceXY*DistanceXY + ZDist*ZDist),
-            dojoDB:insert_synapse(SourcePid, TargetPid, {Distance, Data});
+
+            TargetPid!{add_source, Source, Target, Data},
+            SourcePid!{add_target, Source, Target},
+
+            dojoManager!{net_message, {"nodes binded", [SourcePid, TargetPid]}} ;
         _Any ->
           dojoManager!{net_message, {"no such target", Target}}
       end;
@@ -130,14 +123,19 @@ handle_cast({bind_nodes, Source, Target, Data}, []) ->
   end,
   {noreply, []};
 
-handle_cast({add_voltage, Voltage, Node}, []) ->
+handle_cast({add_voltage, _Voltage, Node}, []) ->
+  dojoManager!{net_message, {"add voltage depricated", Node}},
+  {noreply, []};
+handle_cast({delete_node, Node}, []) ->
   case dojoDB:get_node_pid(Node) of
     {ok, NodePid}  ->
-      NodePid!{add_voltage, Voltage};
+      dojoManager!{net_message, {"send kill message to", NodePid}},
+      NodePid!{kill, user_request};
     _Any ->
       dojoManager!{net_message, {"no such node", Node}}
   end,
   {noreply, []}.
+
 
 
 
@@ -153,7 +151,7 @@ handle_cast({add_voltage, Voltage, Node}, []) ->
   Timeout :: non_neg_integer() | infinity.
 %% ====================================================================
 handle_info(Any, []) ->
-  io:format("Handle info ~p~n", [Any]),
+  dojoManager!{net_message, {"Handle info", Any}},
   {noreply, []}.
 
 
@@ -167,7 +165,7 @@ handle_info(Any, []) ->
   | term().
 %% ====================================================================
 terminate(Reason, []) ->
-  io:format("Network terminated~n"),
+  dojoManager!{net_message, {"Network terminated", Reason}},
   Msg = {kill, Reason},
   dojoDB:send_message_broadcast(Msg),
   ok.
